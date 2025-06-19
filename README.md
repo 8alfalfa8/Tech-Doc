@@ -1,4 +1,4 @@
-# プロジェクト名（8alfalfa8/Tech-Doc）
+# 技術資料＆メモ（8alfalfa8/Tech-Doc）
 
 このリポジトリは、8alfalfa8 により作成された文書・資料を含んでいます。
 
