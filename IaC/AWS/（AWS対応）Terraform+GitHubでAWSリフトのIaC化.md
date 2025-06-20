@@ -175,7 +175,7 @@ resource "aws_db_instance" "oracle" {
 ---
 
 ## 今後の展望
-
+* インフラ詳細設計書⇒IaC自動生成
 * Terraform CloudによるState管理の中央集約
 * Sentinelによるポリシー制御（Policy as Code）
 * OPA (Open Policy Agent) との連携
