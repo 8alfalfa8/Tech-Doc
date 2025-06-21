@@ -1034,13 +1034,13 @@ Dockerで構築したアプリを、Kubernetesの標準API（Deployment、Servic
                          [ GitHub Actions / ArgoCD ]
                                    │
        ┌──────────────┐       ┌──────────────┐
-       │ Amazon ECR   │ <───> │ Deployment    │
+       │ Amazon ECR   │ <───> │ Deployment   │
        └──────────────┘       └──────────────┘
                                   │
                          [Amazon EKS Cluster]
                                   │
         ┌────────────┬────────────┬────────────┐
-        │ user-api    │ order-api  │ auth-api   │ ← Pod群
+        │ user-api   │ order-api  │ auth-api   │ ← Pod群
         └────────────┴────────────┴────────────┘
                 │            │             │
              [Service]    [Service]     [Service]
