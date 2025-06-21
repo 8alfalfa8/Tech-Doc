@@ -334,7 +334,7 @@ docker run --read-only --cap-drop=ALL --user 1000 --security-opt no-new-privileg
 
 ---
 
-## 🧭 Kubernetesとは
+## 🧭 Kubernetesとは – コンテナアプリ統合管理システム
 
 Kubernetes（クバネティス、略称：K8s）とは、
 **コンテナ化されたアプリケーションを自動的にデプロイ・スケーリング・管理するためのオープンソースのオーケストレーションプラットフォーム**です。
