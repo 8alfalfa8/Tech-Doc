@@ -743,7 +743,7 @@ docker push <ECR_URL>/myapp:latest
 
 ```
 [GitHub Actions] ──→ [ECR]
-                          ↓
+                       ↓
      ┌────────────────────────────┐
      │         ECS Cluster        │
      │   ┌───────────────┐        │
