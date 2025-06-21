@@ -1,7 +1,7 @@
 
 ---
 
-## 【実践記】Terraform × GitHubでAWS移行を完全IaC化した記録
+# 🚀【実践記】Terraform × GitHubでAWS移行を完全IaC化した記録
 
 〜2人チームで3ヶ月、Oracle RDS含む60台本番構築〜
 
