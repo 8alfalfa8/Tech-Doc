@@ -95,6 +95,16 @@ AWSが推奨する「Well-Architected Framework」における**セキュリテ�
 
 ---
 
+## ✅ 補足説明
+
+以下は、300文字以内で「Web Application Firewall」と「Well-Architected Framework」を混同しないよう呼びかける文章です。
+
+---
+
+「WAF」という略称は、Webアプリケーションを守る**Web Application Firewall**と、クラウド設計のベストプラクティスを示す**Well-Architected Framework**の両方で使われるため混同しやすい略語です。説明や資料作成時には、略さず正式名称を記載し、文脈や用途に応じて使い分けるよう心がけましょう。
+
+---
+
 ## 📁 ご参考：IAMベストプラクティス
 
 | 項目            | 内容                             |
