@@ -406,7 +406,7 @@ fields @timestamp, eventName, userIdentity.userName, sourceIPAddress
 
 # 🚀 別々に分析・可視化したいケース
 
-CloudWatch LogsとCloudTrailを\*\*「別々に」分析・可視化したい場合\*\*、目的・用途に応じて適切な構成は変わります。
+CloudWatch LogsとCloudTrailを**「別々に」分析・可視化したい場合**、目的・用途に応じて適切な構成は変わります。
 以下に、両方式（①S3＋Athena／②CloudWatch集中）の**使い分けポイント**を整理します。
 
 ---
