@@ -68,3 +68,9 @@
 など、使い分け・組み合わせもできます。
 
 ---
+## 📝 推奨IaCツール(無料)
+
+* Terraform Code Generator from Excel(for AWS)
+  - Excelで定義されたAWSインフラ構成情報(パラメータシート)から、Terraformコードを自動生成するためのツールです。
+  - https://github.com/8alfalfa8/aws-terraform-code-generator
+---
