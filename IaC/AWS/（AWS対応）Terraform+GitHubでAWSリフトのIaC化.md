@@ -191,4 +191,10 @@ resource "aws_db_instance" "oracle" {
 | メンバーB     | AWSアーキテクト、Terraformレビュー・検証、RDS管理者 |
 
 ---
+## 📝 推奨IaCツール(無料)
+
+* Terraform Code Generator from Excel(for AWS)
+  - Excelで定義されたAWSインフラ構成情報(パラメータシート)から、Terraformコードを自動生成するためのツールです。
+  - https://github.com/8alfalfa8/aws-terraform-code-generator
+---
 
