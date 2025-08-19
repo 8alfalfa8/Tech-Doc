@@ -1,80 +1,112 @@
-Spring Batch の処理シーケンス図を「ジョブ実行」を軸にして整理しました。
-一般的な JobLauncher → Job → Step → ItemReader / ItemProcessor / ItemWriter の流れを表現します。
+Spring Batchの主要コンポーネント間の相互作用を示すシーケンス図を作成します。
 
-
----
-
-Spring Batch シーケンス図（概念レベル）
-
+```mermaid
 sequenceDiagram
-    participant Client as クライアント
-    participant JobLauncher as JobLauncher
-    participant Job as Job
-    participant Step as Step
-    participant Reader as ItemReader
-    participant Processor as ItemProcessor
-    participant Writer as ItemWriter
-    participant Repository as JobRepository
+    participant App as アプリケーション
+    participant JobLauncher
+    participant Job
+    participant JobRepository
+    participant Step
+    participant ItemReader
+    participant ItemProcessor
+    participant ItemWriter
+    participant Chunk
 
-    Client->>JobLauncher: ジョブ起動 (JobParameters)
-    JobLauncher->>Repository: ジョブ実行情報を登録
-    JobLauncher->>Job: ジョブ開始
+    App->>JobLauncher: run(Job, JobParameters)
+    activate JobLauncher
     
-    loop 各Step
-        Job->>Step: Step開始
-        Step->>Repository: Step実行情報を登録
+    JobLauncher->>JobRepository: createJobExecution()
+    activate JobRepository
+    JobRepository-->>JobLauncher: JobExecution
+    deactivate JobRepository
+    
+    JobLauncher->>Job: execute(JobExecution)
+    activate Job
+    
+    loop 全Stepの実行
+        Job->>Step: execute(StepExecution)
+        activate Step
         
-        loop Chunkごとの処理
-            Step->>Reader: データ読み込み
-            Reader-->>Step: Itemデータ
+        Step->>JobRepository: createStepExecution()
+        activate JobRepository
+        JobRepository-->>Step: StepExecution
+        deactivate JobRepository
+        
+        loop チャンク処理
+            Step->>ItemReader: read()
+            activate ItemReader
+            ItemReader-->>Step: item
+            deactivate ItemReader
             
-            Step->>Processor: データ加工/検証
-            Processor-->>Step: 加工済みデータ
-            
-            Step->>Writer: データ書き込み
-            Writer-->>Step: 書き込み結果
+            alt itemがnullでない場合
+                Step->>ItemProcessor: process(item)
+                activate ItemProcessor
+                ItemProcessor-->>Step: processedItem
+                deactivate ItemProcessor
+                
+                Step->>Chunk: addItem(processedItem)
+                activate Chunk
+                deactivate Chunk
+                
+                alt チャンクサイズ達成
+                    Step->>ItemWriter: write(Chunk)
+                    activate ItemWriter
+                    ItemWriter-->>Step: 完了
+                    deactivate ItemWriter
+                    
+                    Step->>JobRepository: updateStepExecution(StepExecution)
+                    activate JobRepository
+                    JobRepository-->>Step: 完了
+                    deactivate JobRepository
+                    
+                    Step->>Chunk: clear()
+                end
+            else
+                Step->>ItemWriter: write(Chunk)
+                activate ItemWriter
+                ItemWriter-->>Step: 完了
+                deactivate ItemWriter
+            end
         end
         
-        Step->>Repository: Step実行結果を更新
+        Step-->>Job: StepExecution status
+        deactivate Step
+        
+        Job->>JobRepository: updateJobExecution(JobExecution)
+        activate JobRepository
+        JobRepository-->>Job: 完了
+        deactivate JobRepository
     end
     
-    Job->>Repository: ジョブ実行結果を更新
-    Job-->>JobLauncher: ジョブ完了
-    JobLauncher-->>Client: 実行結果返却
+    Job-->>JobLauncher: JobExecution status
+    deactivate Job
+    
+    JobLauncher-->>App: JobExecution
+    deactivate JobLauncher
+```
 
+シーケンスの説明
 
----
+1. ジョブ起動: アプリケーションがJobLauncherを通じてジョブを実行
+2. 実行記録の作成: JobRepositoryにJobExecutionとStepExecutionを作成
+3. ステップ実行: ジョブ内の各ステップを順次実行
+4. チャンク処理:
+   · ItemReaderでデータ読み取り
+   · ItemProcessorでデータ加工（オプション）
+   · チャンクにアイテムを追加
+   · チャンクサイズ達成時にItemWriterで書き込み
+5. 状態更新: 各処理後にJobRepositoryに実行状態を保存
+6. 完了処理: 全ステップ終了後、最終結果を返す
 
-ポイント解説
+主要コンポーネントの役割
 
-1. JobLauncher
+· JobLauncher: ジョブ実行のエントリーポイント
+· JobRepository: メタデータ（実行状態など）の永続化
+· Job: バッチ処理の実行単位
+· Step: ジョブを構成する個々の処理単位
+· ItemReader: データ入力
+· ItemProcessor: データ加工
+· ItemWriter: データ出力
+· Chunk: トランザクション処理の単位
 
-ジョブ実行のエントリポイント。
-
-JobRepository に実行開始を記録した上で Job を起動します。
-
-
-
-2. Job
-
-複数の Step で構成される。
-
-Step の実行順序や条件分岐を制御可能。
-
-
-
-3. Step
-
-チャンク指向処理が一般的。
-
-ItemReader → ItemProcessor → ItemWriter の流れで 1チャンク単位の処理を繰り返す。
-
-
-
-4. JobRepository
-
-ジョブ/ステップの開始・進行・終了状態を永続化し、再実行やリスタートを可能にする。
-
-
-
-
+このシーケンス図はSpring Batchの基本的な処理フローを示しており、実際の実装ではより複雑な処理やリスナーなどが追加される場合があります。
