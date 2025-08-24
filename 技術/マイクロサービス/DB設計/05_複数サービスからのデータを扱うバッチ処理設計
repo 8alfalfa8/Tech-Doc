@@ -1,0 +1,512 @@
+# 複数サービスからのデータを扱うバッチ処理設計
+
+## 1. アーキテクリアプローチ
+
+### 1.1. 集中型データ集約パターン
+```mermaid
+graph TB
+    subgraph マイクロサービス
+        A[User Service]
+        B[Order Service]
+        C[Product Service]
+        D[Payment Service]
+    end
+
+    subgraph データ集約層
+        E[Data Lake]
+        F[Data Warehouse]
+        G[Operational Data Store]
+    end
+
+    subgraph バッチ処理層
+        H[Batch Processor]
+        I[ETL Pipeline]
+        J[Data Transformer]
+    end
+
+    A -->|CDC/API| E
+    B -->|CDC/API| E
+    C -->|CDC/API| E
+    D -->|CDC/API| E
+
+    E --> H
+    F --> H
+    G --> H
+
+    H --> I --> J
+```
+
+## 2. データ収集戦略
+
+### 2.1. マルチソースデータ収集
+```java
+@Component
+public class MultiSourceDataCollector {
+
+    @Autowired
+    private UserServiceClient userServiceClient;
+    
+    @Autowired
+    private OrderServiceClient orderServiceClient;
+    
+    @Autowired
+    private ProductServiceClient productServiceClient;
+    
+    @Autowired
+    private DataLakeRepository dataLakeRepository;
+
+    @Scheduled(cron = "0 0 2 * * ?") // 毎日AM2:00
+    public void collectDataFromAllServices() {
+        // 並列で各サービスからデータ収集
+        CompletableFuture<Void> userFuture = CompletableFuture.runAsync(() ->
+            collectUserData()
+        );
+        
+        CompletableFuture<Void> orderFuture = CompletableFuture.runAsync(() ->
+            collectOrderData()
+        );
+        
+        CompletableFuture<Void> productFuture = CompletableFuture.runAsync(() ->
+            collectProductData()
+        );
+
+        // すべての収集が完了するまで待機
+        CompletableFuture.allOf(userFuture, orderFuture, productFuture)
+            .exceptionally(ex -> {
+                log.error("Data collection failed", ex);
+                return null;
+            })
+            .join();
+    }
+
+    private void collectUserData() {
+        List<User> users = userServiceClient.getAllUsers();
+        dataLakeRepository.save("users", users);
+    }
+
+    private void collectOrderData() {
+        LocalDate yesterday = LocalDate.now().minusDays(1);
+        List<Order> orders = orderServiceClient.getOrdersByDate(yesterday);
+        dataLakeRepository.save("orders", orders);
+    }
+}
+```
+
+## 3. データ統合設計
+
+### 3.1. 統一データモデル
+```java
+// 統合データモデル
+@Data
+public class EnrichedOrder {
+    private String orderId;
+    private LocalDateTime orderDate;
+    private BigDecimal totalAmount;
+    
+    // User Serviceからのデータ
+    private String userId;
+    private String userName;
+    private String userEmail;
+    
+    // Product Serviceからのデータ
+    private List<OrderItem> items;
+    private String productCategory;
+    
+    // Payment Serviceからのデータ
+    private String paymentStatus;
+    private LocalDateTime paymentDate;
+}
+
+// バッチ処理サービス
+@Service
+public class OrderEnrichmentBatch {
+    
+    @Autowired
+    private UserServiceClient userService;
+    
+    @Autowired
+    private ProductServiceClient productService;
+    
+    @Autowired
+    private PaymentServiceClient paymentService;
+    
+    @Autowired
+    private OrderRepository orderRepository;
+    
+    public void processDailyOrders() {
+        LocalDate processDate = LocalDate.now().minusDays(1);
+        
+        // 1. 注文データ取得
+        List<Order> orders = orderRepository.findByDate(processDate);
+        
+        // 2. データエンリッチメント
+        List<EnrichedOrder> enrichedOrders = orders.parallelStream()
+            .map(this::enrichOrder)
+            .collect(Collectors.toList());
+        
+        // 3. 処理実行
+        processEnrichedOrders(enrichedOrders);
+    }
+    
+    private EnrichedOrder enrichOrder(Order order) {
+        EnrichedOrder enriched = new EnrichedOrder();
+        
+        // 基本情報
+        enriched.setOrderId(order.getId());
+        enriched.setOrderDate(order.getOrderDate());
+        enriched.setTotalAmount(order.getTotalAmount());
+        
+        // User Serviceから情報取得
+        User user = userService.getUser(order.getUserId());
+        enriched.setUserId(user.getId());
+        enriched.setUserName(user.getName());
+        enriched.setUserEmail(user.getEmail());
+        
+        // Product Serviceから情報取得
+        enriched.setItems(order.getItems().stream()
+            .map(item -> {
+                Product product = productService.getProduct(item.getProductId());
+                return new OrderItem(item, product);
+            })
+            .collect(Collectors.toList()));
+        
+        // Payment Serviceから情報取得
+        Payment payment = paymentService.getPayment(order.getId());
+        enriched.setPaymentStatus(payment.getStatus());
+        enriched.setPaymentDate(payment.getPaymentDate());
+        
+        return enriched;
+    }
+}
+```
+
+## 4. バッチ処理オーケストレーション
+
+### 4.1. Spring Batchによるワークフロー管理
+```java
+@Configuration
+@EnableBatchProcessing
+public class MultiServiceBatchConfig {
+
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+    
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Bean
+    public Job multiServiceBatchJob() {
+        return jobBuilderFactory.get("multiServiceBatchJob")
+            .start(dataCollectionStep())
+            .next(dataEnrichmentStep())
+            .next(dataProcessingStep())
+            .next(cleanupStep())
+            .build();
+    }
+
+    @Bean
+    public Step dataCollectionStep() {
+        return stepBuilderFactory.get("dataCollectionStep")
+            .tasklet((contribution, chunkContext) -> {
+                // 複数サービスからデータ収集
+                collectDataFromAllServices();
+                return RepeatStatus.FINISHED;
+            })
+            .build();
+    }
+
+    @Bean
+    public Step dataEnrichmentStep() {
+        return stepBuilderFactory.get("dataEnrichmentStep")
+            .<Order, EnrichedOrder>chunk(100)
+            .reader(orderReader())
+            .processor(orderEnricher())
+            .writer(enrichedOrderWriter())
+            .build();
+    }
+}
+```
+
+## 5. データ品質と整合性保証
+
+### 5.1. データ検証とエラーハンドリング
+```java
+@Service
+public class DataQualityService {
+
+    public void validateDataConsistency(List<EnrichedOrder> orders) {
+        orders.forEach(order -> {
+            // 外部キー整合性チェック
+            if (order.getUserId() == null) {
+                throw new DataValidationException("User not found for order: " + order.getOrderId());
+            }
+            
+            // ビジネスルール検証
+            if (order.getTotalAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new DataValidationException("Invalid order amount: " + order.getOrderId());
+            }
+            
+            // 時系列整合性チェック
+            if (order.getPaymentDate() != null && 
+                order.getPaymentDate().isBefore(order.getOrderDate())) {
+                throw new DataValidationException("Payment date before order date: " + order.getOrderId());
+            }
+        });
+    }
+
+    @Retryable(value = {ServiceUnavailableException.class}, 
+              maxAttempts = 3, 
+              backoff = @Backoff(delay = 1000, multiplier = 2))
+    public void processWithRetry(EnrichedOrder order) {
+        try {
+            processOrder(order);
+        } catch (ServiceUnavailableException e) {
+            log.warn("Service unavailable, retrying...");
+            throw e;
+        }
+    }
+}
+```
+
+## 6. パフォーマンス最適化
+
+### 6.1. 並列処理とバッチ最適化
+```java
+@Component
+public class ParallelDataProcessor {
+
+    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    
+    public void processInParallel(List<EnrichedOrder> orders) {
+        List<CompletableFuture<Void>> futures = orders.stream()
+            .map(order -> CompletableFuture.runAsync(() ->
+                processOrder(order), executor))
+            .collect(Collectors.toList());
+        
+        // すべての処理が完了するまで待機
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+            .exceptionally(ex -> {
+                log.error("Parallel processing failed", ex);
+                return null;
+            })
+            .join();
+    }
+
+    @Async("batchTaskExecutor")
+    public CompletableFuture<Void> processOrderAsync(EnrichedOrder order) {
+        return CompletableFuture.runAsync(() -> processOrder(order));
+    }
+}
+
+// 設定クラス
+@Configuration
+@EnableAsync
+public class AsyncConfig {
+    
+    @Bean("batchTaskExecutor")
+    public TaskExecutor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(1000);
+        executor.setThreadNamePrefix("batch-processor-");
+        executor.initialize();
+        return executor;
+    }
+}
+```
+
+## 7. 監視とロギング
+
+### 7.1. 包括的な監視設定
+```java
+@Component
+public class BatchMonitoring {
+    
+    private final MeterRegistry meterRegistry;
+    private final Timer processingTimer;
+    
+    public BatchMonitoring(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+        this.processingTimer = Timer.builder("batch.processing.time")
+            .description("Batch processing time")
+            .register(meterRegistry);
+    }
+    
+    public void recordBatchMetrics(String batchName, int processedRecords, 
+                                 Duration processingTime, boolean success) {
+        // メトリクス記録
+        meterRegistry.counter("batch.records.processed", 
+            "batch", batchName, "status", success ? "success" : "failure")
+            .increment(processedRecords);
+        
+        processingTimer.record(processingTime);
+        
+        // サービス別メトリクス
+        Tags tags = Tags.of("batch", batchName, "service", "multi");
+        meterRegistry.counter("batch.service.calls", tags).increment();
+    }
+    
+    @EventListener
+    public void handleBatchEvent(BatchStatusEvent event) {
+        log.info("Batch {} completed with status: {}", 
+            event.getBatchName(), event.getStatus());
+        
+        if (event.getStatus() == BatchStatus.FAILED) {
+            // アラート通知
+            sendAlert(event.getBatchName(), event.getErrorMessage());
+        }
+    }
+}
+```
+
+## 8. 設定管理
+
+### 8.1. マルチサービス設定
+```yaml
+# application.yml
+batch:
+  processing:
+    enabled: true
+    cron: "0 0 2 * * ?"
+    chunk-size: 100
+    retry-attempts: 3
+    timeout-minutes: 120
+
+services:
+  user:
+    url: http://user-service/api
+    timeout: 5000
+    retry-attempts: 3
+  order:
+    url: http://order-service/api  
+    timeout: 3000
+    retry-attempts: 2
+  product:
+    url: http://product-service/api
+    timeout: 4000
+    retry-attempts: 3
+
+data-lake:
+  path: /data/lake
+  retention-days: 365
+  backup-enabled: true
+```
+
+## 9. エラーハンドリングとリカバリ
+
+### 9.1. 堅牢なエラー処理
+```java
+@Service
+@Slf4j
+public class ErrorHandlingService {
+
+    @Autowired
+    private FailedRecordRepository failedRecordRepository;
+    
+    public void handleProcessingError(EnrichedOrder order, Exception e) {
+        // エラーレコードを保存
+        FailedRecord failedRecord = new FailedRecord();
+        failedRecord.setRecordType("EnrichedOrder");
+        failedRecord.setRecordData(serializeOrder(order));
+        failedRecord.setErrorMessage(e.getMessage());
+        failedRecord.setStackTrace(ExceptionUtils.getStackTrace(e));
+        failedRecord.setOccurredAt(LocalDateTime.now());
+        
+        failedRecordRepository.save(failedRecord);
+        
+        // メトリクス更新
+        meterRegistry.counter("batch.processing.errors").increment();
+        
+        // アラート通知（重大なエラーのみ）
+        if (isCriticalError(e)) {
+            sendCriticalAlert(order, e);
+        }
+    }
+    
+    public void retryFailedRecords() {
+        List<FailedRecord> failedRecords = failedRecordRepository.findByRetryCountLessThan(3);
+        
+        failedRecords.forEach(record -> {
+            try {
+                EnrichedOrder order = deserializeOrder(record.getRecordData());
+                processOrder(order);
+                record.setStatus("RETRY_SUCCESS");
+                record.setRetriedAt(LocalDateTime.now());
+            } catch (Exception e) {
+                record.setRetryCount(record.getRetryCount() + 1);
+                record.setLastError(e.getMessage());
+            }
+            failedRecordRepository.save(record);
+        });
+    }
+}
+```
+
+## 10. デプロイとスケーリング
+
+### 10.1. Kubernetesデプロイメント
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch-processor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: batch-processor
+  template:
+    metadata:
+      labels:
+        app: batch-processor
+    spec:
+      containers:
+      - name: batch-processor
+        image: batch-processor:latest
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "production"
+        - name: JAVA_OPTS
+          value: "-Xmx2g -Xms1g"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-batch-job
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: batch-job
+            image: batch-processor:latest
+            command: ["java", "-jar", "app.jar", "--spring.batch.job.names=dailyBatchJob"]
+          restartPolicy: OnFailure
+```
+
+---
+**重要な考慮事項**:
+
+1. **データ整合性**: 複数サービスからのデータのタイミング整合性を確保
+2. **パフォーマンス**: 並列処理と適切なchunk sizeの設定
+3. **エラーハンドリング**: リトライ機制とdead letter queueの実装
+4. **監視**: 包括的なメトリクスとアラート設定
+5. **リソース管理**: メモリとCPUの適切な割り当て
+
+このアーキテクチャにより、複数マイクロサービスに跨るデータを効果的にバッチ処理することが可能になります。
